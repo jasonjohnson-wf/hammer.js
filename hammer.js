@@ -11,32 +11,36 @@ function Hammer(element, options, undefined)
 
     var defaults = {
         // prevent the default event or not... might be buggy when false
-        prevent_default    : false,
-        css_hacks          : true,
+        prevent_default         : false,
+        css_hacks               : true,
 
-        swipe              : true,
-        swipe_time         : 200,   // ms
-        swipe_min_distance : 20,   // pixels
+        swipe                   : true,
+        swipe_time              : 200,   // ms
+        swipe_min_distance      : 20,   // pixels
 
-        drag               : true,
-        drag_vertical      : true,
-        drag_horizontal    : true,
+        drag                    : true,
+        drag_vertical           : true,
+        drag_horizontal         : true,
         // minimum distance before the drag event starts
-        drag_min_distance  : 20,    // pixels
+        drag_min_distance       : 20,    // pixels
 
         // pinch zoom and rotation
-        transform          : true,
-        scale_treshold     : 0.1,
-        rotation_treshold  : 15,    // degrees
+        transform               : true,
+        scale_treshold          : 0.1,
+        rotation_treshold       : 15,    // degrees
 
-        tap                : true,
-        tap_double         : true,
-        tap_max_interval   : 300,
-        tap_max_distance   : 10,
-        tap_double_distance: 20,
+        tap                     : true,
+        tap_double              : true,
+        tap_max_interval        : 300,
+        tap_max_distance        : 10,
+        tap_double_distance     : 20,
 
-        hold               : true,
-        hold_timeout       : 500
+        hold                    : true,
+        hold_timeout            : 500,
+
+        // maximum of 2 finger touch. takes care of 3rd touch bugs
+        two_touch_max           : true,
+        allow_touch_and_mouse   : false
     };
     options = mergeObject(defaults, options);
 
@@ -150,11 +154,12 @@ function Hammer(element, options, undefined)
      * @return  void
      */
     this.destroy = function() {
-        if(_has_touch) {
+        if(_has_touch || options.allow_touch_and_mouse) {
             removeEvent(element, "touchstart touchmove touchend touchcancel", handleEvents);
         }
+
         // for non-touch
-        else {
+        if (!_has_touch || options.allow_touch_and_mouse) {
             removeEvent(element, "mouseup mousedown mousemove", handleEvents);
             removeEvent(element, "mouseout", handleMouseOut);
         }
@@ -176,33 +181,56 @@ function Hammer(element, options, undefined)
 
 
     /**
+     * Gets the event xy positions from a mouse event.
+     * @param event
+     * @return {Array}
+     */
+    function getXYMouse(event) {
+        var doc = document,
+            body = doc.body;
+
+        return [{
+            x: event.pageX || event.clientX + ( doc && doc.scrollLeft || body && body.scrollLeft || 0 ) - ( doc && doc.clientLeft || body && doc.clientLeft || 0 ),
+            y: event.pageY || event.clientY + ( doc && doc.scrollTop || body && body.scrollTop || 0 ) - ( doc && doc.clientTop || body && doc.clientTop || 0 )
+        }];
+    }
+
+    /**
+     * gets the event xy positions from touch event.
+     * @param event
+     * @return {Array}
+     */
+    function getXYTouch(event) {
+        var pos = [], src;
+        for(var t=0, len = options.two_touch_max ? Math.min(2, event.touches.length) : event.touches.length; t<len; t++) {
+            src = event.touches[t];
+            pos.push({ x: src.pageX, y: src.pageY });
+        }
+        return pos;
+    }
+
+    /**
      * get the x and y positions from the event object
      * @param  event
      * @return array  [{ x: int, y: int }]
      */
-    function getXYfromEvent( event )
+    function getXYfromEvent(event)
     {
+        var _fn = getXYMouse;
         event = event || window.event;
 
         // no touches, use the event pageX and pageY
-        if(!_has_touch) {
-            var doc = document,
-                body = doc.body;
+        if (!_has_touch) {
+            if (options.allow_touch_and_mouse &&
+                event.touches !== undefined && event.touches.length > 0) {
 
-            return [{
-                x: event.pageX || event.clientX + ( doc && doc.scrollLeft || body && body.scrollLeft || 0 ) - ( doc && doc.clientLeft || body && doc.clientLeft || 0 ),
-                y: event.pageY || event.clientY + ( doc && doc.scrollTop || body && body.scrollTop || 0 ) - ( doc && doc.clientTop || body && doc.clientTop || 0 )
-            }];
-        }
-        // multitouch, return array with positions
-        else {
-            var pos = [], src;
-            for(var t=0, len=event.touches.length; t<len; t++) {
-                src = event.touches[t];
-                pos.push({ x: src.pageX, y: src.pageY });
+                _fn = getXYTouch;
             }
-            return pos;
+        } else {
+            _fn = getXYTouch;
         }
+
+        return _fn(event);
     }
 
 
@@ -320,6 +348,9 @@ function Hammer(element, options, undefined)
         // fired on touchstart
         hold : function(event)
         {
+            if (options.two_touch_max && _fingers >= 3) {
+                return;
+            }
             // only when one finger is on the screen
             if(options.hold) {
                 _gesture = 'hold';
@@ -340,6 +371,9 @@ function Hammer(element, options, undefined)
         // fired on touchend
         swipe : function(event)
         {
+            if (options.two_touch_max && _fingers >= 3) {
+                return;
+            }
             if (!_pos.move || _gesture === "transform") {
                 return;
             }
@@ -383,6 +417,9 @@ function Hammer(element, options, undefined)
         // fired on mousemove
         drag : function(event)
         {
+            if (options.two_touch_max && _fingers >= 2) {
+                return;
+            }
             // get the distance we moved
             var _distance_x = _pos.move[0].x - _pos.start[0].x;
             var _distance_y = _pos.move[0].y - _pos.start[0].y;
@@ -438,7 +475,7 @@ function Hammer(element, options, undefined)
         {
             if(options.transform) {
                 var count = countFingers(event);
-                if (count !== 2) {
+                if (options.two_touch_max && count < 2) {
                     return false;
                 }
 
@@ -560,11 +597,15 @@ function Hammer(element, options, undefined)
         {
             case 'mousedown':
             case 'touchstart':
+                if (options.two_touch_max && _gesture === 'transform') {
+                    cancelEvent(event);
+                    return;
+                }
                 count = countFingers(event);
                 _can_tap = count === 1;
 
                 //We were dragging and now we are zooming.
-                if (count === 2 && _gesture === "drag") {
+                if (options.two_touch_max && count >= 2 && _gesture === "drag") {
 
                     //The user needs to have the dragend to be fired to ensure that
                     //there is proper cleanup from the drag and move onto transforming.
@@ -610,7 +651,11 @@ function Hammer(element, options, undefined)
             case 'mouseout':
             case 'touchcancel':
             case 'touchend':
-                var callReset = true;
+                _fingers = countFingers(event);
+                if (options.two_touch_max && _fingers >= 2) {
+                    return;
+                }
+                var callReset = options.two_touch_max ? _fingers < 2 : true;
 
                 _mousedown = false;
                 _event_end = event;
@@ -635,7 +680,7 @@ function Hammer(element, options, undefined)
                     // define the transform distance
                     var _distance_x = _pos.center.x - _pos.startCenter.x;
                     var _distance_y = _pos.center.y - _pos.startCenter.y;
-                    
+
                     triggerEvent("transformend", {
                         originalEvent   : event,
                         position        : _pos.center,
@@ -717,11 +762,12 @@ function Hammer(element, options, undefined)
 
     // bind events for touch devices
     // except for windows phone 7.5, it doesnt support touch events..!
-    if(_has_touch) {
+    if(_has_touch || options.allow_touch_and_mouse) {
         addEvent(element, "touchstart touchmove touchend touchcancel", handleEvents);
     }
+
     // for non-touch
-    else {
+    if (!_has_touch || options.allow_touch_and_mouse) {
         addEvent(element, "mouseup mousedown mousemove", handleEvents);
         addEvent(element, "mouseout", handleMouseOut);
     }
